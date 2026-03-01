@@ -8,8 +8,11 @@ const messageSchema = new mongoose.Schema({
   },
   to: {
     type: String,
-    required: true,
-    ref: 'User'
+    required: true
+  },
+  isGroup: {
+    type: Boolean,
+    default: false
   },
   message: {
     type: String,
@@ -20,6 +23,12 @@ const messageSchema = new mongoose.Schema({
     enum: ['sent', 'delivered', 'read'],
     default: 'sent'
   },
+  reactions: [
+    {
+      emoji: String,
+      users: [String] // Array of userNames
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

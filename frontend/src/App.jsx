@@ -1,16 +1,6 @@
 import socket from "./utils/socket";
 import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { MessageCircle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,35 +11,32 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Send, MessageCircle, LogOut, Check } from "lucide-react";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarFooter,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarInset,
   SidebarTrigger,
-  SidebarRail,
 } from "@/components/ui/sidebar";
+
+// Extracted Components
+import AuthForm from "./components/chat/AuthForm";
+import ChatSidebar from "./components/chat/ChatSidebar";
+import ChatWindow from "./components/chat/ChatWindow";
 
 const App = () => {
   const SEND_MESSAGE = "send_message";
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
+  const [rooms, setRooms] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
-  const [userName, setUserName] = useState("");
-  const [password, setPassword] = useState("");
+  const [userName, setUserName] = useState(localStorage.getItem("chat_user") || "");
+  const [password, setPassword] = useState(localStorage.getItem("chat_pass") || "");
   const [selectedUser, setSelectedUser] = useState("");
+  const [isGroupSelected, setIsGroupSelected] = useState(false);
   const [messageText, setMessageText] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [typingUsers, setTypingUsers] = useState(new Set());
+  const [unreadCounts, setUnreadCounts] = useState({});
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
@@ -73,79 +60,83 @@ const App = () => {
   // Helper function to render message status ticks
   const renderMessageTicks = (status) => {
     if (status === "sent") {
-      // Single gray tick
-      return <Check className="w-3 h-3 inline-block ml-1" />;
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline-block ml-1"><path d="M20 6 9 17l-5-5" /></svg>
+      );
     } else if (status === "delivered") {
-      // Double gray ticks
       return (
         <span className="inline-flex ml-1">
-          <Check className="w-3 h-3 -mr-1.5" />
-          <Check className="w-3 h-3" />
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="-mr-1.5"><path d="M20 6 9 17l-5-5" /></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
         </span>
       );
     } else if (status === "read") {
-      // Double blue ticks
       return (
         <span className="inline-flex ml-1 text-red-700">
-          <Check className="w-3 h-3 -mr-1.5" />
-          <Check className="w-3 h-3" />
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="-mr-1.5"><path d="M20 6 9 17l-5-5" /></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
         </span>
       );
     }
     return null;
   };
 
-  // Get selected user object
-  const selectedUserObj = users.find((u) => u.name === selectedUser);
+  const selectedUserObj = !isGroupSelected ? users.find((u) => u.name === selectedUser) : null;
+  const selectedRoomObj = isGroupSelected ? rooms.find((r) => r.name === selectedUser) : null;
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // Mark messages as read when new messages arrive in current conversation
   useEffect(() => {
     if (selectedUser && isConnected) {
-      socket.emit("messages_read", { from: selectedUser, to: userName });
+      if (isGroupSelected) {
+        socket.emit("mark_room_read", { roomName: selectedUser });
+      } else {
+        socket.emit("messages_read", { from: selectedUser, to: userName });
+      }
+
+      setUnreadCounts((prev) => {
+        if (!prev[selectedUser]) return prev;
+        const newCounts = { ...prev };
+        delete newCounts[selectedUser];
+        return newCounts;
+      });
     }
-  }, [messages, selectedUser, userName, isConnected]);
+  }, [messages, selectedUser, userName, isConnected, isGroupSelected]);
 
   useEffect(() => {
-    scrollToBottom();
-    // Clear typing timeout when switching users
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-    
-    // Mark messages as read when viewing conversation
+
     if (selectedUser && isConnected) {
       socket.emit("messages_read", { from: selectedUser, to: userName });
     }
   }, [selectedUser, userName, isConnected]);
 
   useEffect(() => {
-    socket.on("receive_message", (message) => {
-      setMessages((prev) => [...prev, message]);
-    });
     socket.on("users", (usersData) => {
       setUsers(usersData);
+    });
+    socket.on("rooms", (roomsData) => {
+      setRooms(roomsData);
     });
     socket.on("message_history", (history) => {
       setMessages(history);
     });
-    socket.on("connect", () => {
-      // Socket connected
-    });
     socket.on("join_success", () => {
       setIsConnected(true);
+      // Persist credentials on successful login
+      localStorage.setItem("chat_user", userName);
+      localStorage.setItem("chat_pass", password);
+    });
+    socket.on("create_room_success", (room) => {
+      setSelectedUser(room.name);
+      setIsGroupSelected(true);
     });
     socket.on("join_error", (error) => {
       alert(error.message);
       setPassword("");
+      localStorage.removeItem("chat_user");
+      localStorage.removeItem("chat_pass");
       socket.disconnect();
     });
     socket.on("typing", ({ from }) => {
@@ -158,6 +149,23 @@ const App = () => {
         return newSet;
       });
     });
+    socket.on("receive_message", (message) => {
+      setMessages((prev) => [...prev, message]);
+
+      // Update unread count if message is not for the currently selected chat
+      const chatKey = message.isGroup ? message.to : message.from;
+      if (chatKey !== selectedUser && message.from !== userName) {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [chatKey]: (prev[chatKey] || 0) + 1,
+        }));
+      }
+    });
+
+    socket.on("unread_counts", (counts) => {
+      setUnreadCounts(counts);
+    });
+
     socket.on("message_delivered", ({ messageId }) => {
       setMessages((prev) =>
         prev.map((msg) =>
@@ -165,6 +173,22 @@ const App = () => {
         )
       );
     });
+    socket.on("join_room_error", ({ message }) => {
+      alert(message);
+    });
+
+    socket.on("notification", ({ message, type }) => {
+      // Simple alert for now, can be upgraded to toast
+      alert(message);
+    });
+    socket.on("message_reaction_updated", ({ messageId, reactions }) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          (msg.id === messageId || msg._id === messageId) ? { ...msg, reactions } : msg
+        )
+      );
+    });
+
     socket.on("messages_read", ({ messageIds }) => {
       setMessages((prev) =>
         prev.map((msg) =>
@@ -173,34 +197,56 @@ const App = () => {
       );
     });
 
+    const handleConnect = () => {
+      setIsConnected(true);
+      // If we have credentials, re-join automatically (handles server restarts)
+      if (userName && password) {
+        socket.emit("join", { userName, password });
+      }
+    };
+
+    const handleDisconnect = () => {
+      setIsConnected(false);
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+
     return () => {
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
       socket.off("receive_message");
       socket.off("users");
+      socket.off("rooms");
       socket.off("message_history");
-      socket.off("connect");
       socket.off("join_success");
+      socket.off("create_room_success");
       socket.off("join_error");
       socket.off("typing");
       socket.off("stop_typing");
+      socket.off("unread_counts");
       socket.off("message_delivered");
+      socket.off("join_room_error");
+      socket.off("notification");
+      socket.off("message_reaction_updated");
       socket.off("messages_read");
     };
-  }, []);
+  }, [userName, password]); // Added userName/password to dependencies for auto-rejoin
 
   const sendMessage = () => {
     if (!messageText.trim() || !selectedUser) return;
 
-    // Clear typing timeout and emit stop_typing
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-    socket.emit("stop_typing", { from: userName, to: selectedUser });
+    socket.emit("stop_typing", { from: userName, to: selectedUser, isGroup: isGroupSelected });
 
     socket.emit(SEND_MESSAGE, {
       userName,
       to: selectedUser,
       data: messageText,
+      isGroup: isGroupSelected,
     });
     setMessageText("");
   };
@@ -209,13 +255,22 @@ const App = () => {
     e.preventDefault();
     if (!userName || !password) return;
 
-    // Reconnect socket if it was disconnected
     if (!socket.connected) {
       socket.connect();
     }
 
     socket.emit("join", { userName, password });
   };
+
+  // Auto-login on mount if credentials exist
+  useEffect(() => {
+    if (userName && password && !isConnected) {
+      if (!socket.connected) {
+        socket.connect();
+      }
+      socket.emit("join", { userName, password });
+    }
+  }, []);
 
   const handleKeyPress = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -224,41 +279,35 @@ const App = () => {
     }
   };
 
-  const handleTyping = (value) => {
+  const handleTyping = (value = "") => {
     setMessageText(value);
 
-    if (!selectedUser || !value.trim()) {
-      // Stop typing if no text or no user selected
+    if (!selectedUser || !value?.trim()) {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
       }
-      socket.emit("stop_typing", { from: userName, to: selectedUser });
+      socket.emit("stop_typing", { from: userName, to: selectedUser, isGroup: isGroupSelected });
       return;
     }
 
-    // Emit typing event
-    socket.emit("typing", { from: userName, to: selectedUser });
+    socket.emit("typing", { from: userName, to: selectedUser, isGroup: isGroupSelected });
 
-    // Clear previous timeout
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // Set new timeout to stop typing after 2 seconds of inactivity
     typingTimeoutRef.current = setTimeout(() => {
-      socket.emit("stop_typing", { from: userName, to: selectedUser });
+      socket.emit("stop_typing", { from: userName, to: selectedUser, isGroup: isGroupSelected });
       typingTimeoutRef.current = null;
     }, 2000);
   };
 
   const handleDisconnect = () => {
-    // Clear typing timeout
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-    // Emit leave event before disconnecting
     socket.emit("leave");
     socket.disconnect();
     setIsConnected(false);
@@ -269,304 +318,58 @@ const App = () => {
     setUsers([]);
     setTypingUsers(new Set());
     setShowDisconnectDialog(false);
+    // Clear persisted credentials on manual logout
+    localStorage.removeItem("chat_user");
+    localStorage.removeItem("chat_pass");
   };
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-linear-to-br from-sky-50 via-cyan-50 to-blue-50 dark:from-gray-900 dark:via-sky-950 dark:to-cyan-950">
       {!isConnected ? (
-        <div className="flex items-center justify-center h-full w-full p-4">
-          <Card className="w-full max-w-md shadow-2xl border-2 border-sky-200 dark:border-sky-900 bg-linear-to-br from-white to-sky-50 dark:from-gray-900 dark:to-sky-950">
-            <CardHeader className="text-center space-y-2">
-              <div className="flex justify-center mb-2">
-                <MessageCircle className="h-16 w-16 text-primary" />
-              </div>
-              <CardTitle className="text-3xl font-bold">
-                Welcome to Chat App
-              </CardTitle>
-              <CardDescription className="text-base">
-                Login or create a new account to start chatting
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Input
-                    type="text"
-                    value={userName}
-                    onChange={(e) => setUserName(e.target.value)}
-                    placeholder="Username"
-                    minLength={3}
-                    required
-                    className="h-12 text-base"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password"
-                    minLength={3}
-                    required
-                    className="h-12 text-base"
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  className="w-full h-12 text-base"
-                  size="lg"
-                >
-                  Login / Sign Up
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
+        <AuthForm
+          userName={userName}
+          setUserName={setUserName}
+          password={password}
+          setPassword={setPassword}
+          handleSubmit={handleSubmit}
+        />
       ) : (
         <SidebarProvider defaultOpen={true} className="h-full">
-          {/* <div className="flex h-full w-full bg-background"> */}
-          {/* Sidebar */}
-          <Sidebar collapsible="icon" variant="inset" className="border-r">
-            <SidebarHeader className="border-b bg-linear-to-r from-sky-600 to-cyan-600 text-white">
-              <div className="flex items-center gap-2 px-2 py-2">
-                <MessageCircle className="h-5 w-5" />
-                <span className="font-semibold text-lg group-data-[collapsible=icon]:hidden">
-                  Chats
-                </span>
-              </div>
-            </SidebarHeader>
-            <SidebarContent>
-              <SidebarGroup>
-                <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
-                  All Users
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {users.filter((u) => u.name !== userName).length === 0 ? (
-                      <div className="p-4 text-center text-muted-foreground text-sm group-data-[collapsible=icon]:hidden">
-                        No other users
-                      </div>
-                    ) : (
-                      users
-                        .filter((u) => u.name !== userName)
-                        .map((user) => (
-                          <SidebarMenuItem key={user.name}>
-                            <SidebarMenuButton
-                              onClick={() => setSelectedUser(user.name)}
-                              isActive={selectedUser === user.name}
-                              className="h-auto py-3 group-data-[collapsible=icon]:justify-center"
-                              tooltip={user.name}
-                            >
-                              <Avatar className="h-9 w-9 shrink-0 relative">
-                                <AvatarFallback className={`${
-                                  user.online
-                                    ? "bg-linear-to-br from-sky-500 to-cyan-500"
-                                    : "bg-linear-to-br from-gray-400 to-gray-500"
-                                } text-white font-semibold text-sm`}>
-                                  {user.name.charAt(0).toUpperCase()}
-                                </AvatarFallback>
-                                {user.online && (
-                                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full"></span>
-                                )}
-                              </Avatar>
-                              <div className="flex flex-col items-start group-data-[collapsible=icon]:hidden">
-                                <span className="font-semibold text-sm">
-                                  {user.name}
-                                </span>
-                                {user.online ? (
-                                  typingUsers.has(user.name) ? (
-                                    <span className="text-xs text-sky-600 dark:text-sky-400 font-medium flex items-center gap-1">
-                                      typing
-                                      <span className="flex gap-0.5">
-                                        <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                                        <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                                        <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce"></span>
-                                      </span>
-                                    </span>
-                                  ) : (
-                                    <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                                      ● Online
-                                    </span>
-                                  )
-                                ) : (
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    {formatLastSeen(user.lastSeen)}
-                                  </span>
-                                )}
-                              </div>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))
-                    )}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            </SidebarContent>
-            <SidebarFooter className="border-t bg-linear-to-r from-sky-50 to-cyan-50 dark:from-gray-800 dark:to-sky-900 p-4">
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => setShowDisconnectDialog(true)}
-                    className="h-11 hover:bg-destructive/10 group-data-[collapsible=icon]:justify-center"
-                    tooltip="Disconnect"
-                  >
-                    <Avatar className="h-9 w-9 shrink-0 group-data-[collapsible=icon]:hidden">
-                      <AvatarFallback className="bg-linear-to-br from-cyan-600 to-sky-600 text-white font-semibold text-sm">
-                        {userName.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <LogOut className="h-5 w-5 text-red-600 dark:text-red-400 hidden group-data-[collapsible=icon]:block" />
-                    <div className="flex flex-col items-start group-data-[collapsible=icon]:hidden">
-                      <span className="font-semibold text-sm">{userName}</span>
-                      <span className="text-xs text-muted-foreground">
-                        Click to disconnect
-                      </span>
-                    </div>
-                    <LogOut className="ml-auto h-4 w-4 text-red-600 dark:text-red-400 group-data-[collapsible=icon]:hidden" />
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarFooter>
-            <SidebarRail />
-          </Sidebar>
-          {/* Main Chat Area */}
+          <ChatSidebar
+            users={users}
+            rooms={rooms}
+            userName={userName}
+            selectedUser={selectedUser}
+            setSelectedUser={setSelectedUser}
+            isGroupSelected={isGroupSelected}
+            setIsGroupSelected={setIsGroupSelected}
+            typingUsers={typingUsers}
+            formatLastSeen={formatLastSeen}
+            setShowDisconnectDialog={setShowDisconnectDialog}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            unreadCounts={unreadCounts}
+          />
           <SidebarInset>
             {selectedUser ? (
-              <>
-                {/* Chat Header */}
-                <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-linear-to-r from-white to-sky-50 dark:from-gray-900 dark:to-sky-950 px-4">
-                  <SidebarTrigger />
-                  <div className="flex items-center gap-3 flex-1">
-                    <Avatar className="h-10 w-10 relative">
-                      <AvatarFallback className={`${
-                        selectedUserObj?.online
-                          ? "bg-linear-to-br from-sky-500 to-cyan-500"
-                          : "bg-linear-to-br from-gray-400 to-gray-500"
-                      } text-white font-semibold`}>
-                        {selectedUser.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                      {selectedUserObj?.online && (
-                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full"></span>
-                      )}
-                    </Avatar>
-                    <div>
-                      <h2 className="font-semibold text-lg">{selectedUser}</h2>
-                      {selectedUserObj?.online ? (
-                        typingUsers.has(selectedUser) ? (
-                          <p className="text-xs text-sky-600 dark:text-sky-400 font-medium flex items-center gap-1">
-                            typing
-                            <span className="flex gap-0.5">
-                              <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                              <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                              <span className="w-1 h-1 bg-sky-600 dark:bg-sky-400 rounded-full animate-bounce"></span>
-                            </span>
-                          </p>
-                        ) : (
-                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                            ● Online
-                          </p>
-                        )
-                      ) : (
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {formatLastSeen(selectedUserObj?.lastSeen)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </header>
-
-                {/* Messages Area */}
-                <div className="flex-1 overflow-hidden bg-linear-to-b from-sky-50/50 to-cyan-50/30 dark:from-gray-900 dark:to-sky-950/30">
-                  <ScrollArea className="h-full">
-                    <div className="p-4 space-y-4">
-                      {messages
-                        .filter(
-                          (msg) =>
-                            (msg.from === userName &&
-                              msg.to === selectedUser) ||
-                            (msg.from === selectedUser && msg.to === userName),
-                        )
-                        .map((msg, idx) => (
-                          <div
-                            key={idx}
-                            className={`flex animate-in slide-in-from-bottom-2 duration-300 ${
-                              msg.from === userName
-                                ? "justify-end"
-                                : "justify-start"
-                            }`}
-                          >
-                            <div
-                              className={`max-w-[70%] rounded-2xl px-4 py-2.5 shadow-md ${
-                                msg.from === userName
-                                  ? "bg-linear-to-br from-sky-500 to-cyan-600 text-white rounded-br-sm"
-                                  : "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-sm border border-sky-200 dark:border-sky-800"
-                              }`}
-                            >
-                              <p className="text-sm wrap-break-word leading-relaxed">
-                                {msg.message}
-                              </p>
-                              <p className="text-[0.65rem] opacity-70 mt-1 text-right flex items-center justify-end gap-1">
-                                <span>{msg.time}</span>
-                                {msg.from === userName && renderMessageTicks(msg.status)}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      {typingUsers.has(selectedUser) && selectedUserObj?.online && (
-                        <div className="flex justify-start animate-in fade-in duration-200">
-                          <div className="bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 rounded-2xl px-4 py-3 shadow-md border border-sky-200 dark:border-sky-800 rounded-bl-sm">
-                            <div className="flex items-center gap-1">
-                              <div className="flex gap-1 ml-1">
-                                <div className="size-1 bg-sky-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                <div className="size-1 bg-sky-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                <div className="size-1 bg-sky-500 rounded-full animate-bounce"></div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      <div ref={messagesEndRef} />
-                    </div>
-                  </ScrollArea>
-                </div>
-
-                {/* Message Input */}
-                <div className="shrink-0 border-t bg-white dark:bg-gray-900 p-4">
-                  {!selectedUserObj?.online && (
-                    <div className="mb-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded px-3 py-2">
-                      {selectedUser} is offline. Your message will be delivered when they come online.
-                    </div>
-                  )}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      sendMessage();
-                    }}
-                    className="flex gap-2"
-                  >
-                    <Input
-                      type="text"
-                      value={messageText}
-                      onChange={(e) => handleTyping(e.target.value)}
-                      placeholder={`Message ${selectedUser}...`}
-                      onKeyDown={handleKeyPress}
-                      className="flex-1 h-11"
-                    />
-                    <Button
-                      type="submit"
-                      size="icon"
-                      disabled={!messageText.trim()}
-                      className="h-11 w-11 shrink-0 bg-linear-to-r from-sky-600 to-cyan-600 hover:from-sky-700 hover:to-cyan-700"
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
-                  </form>
-                </div>
-              </>
+              <ChatWindow
+                selectedUser={selectedUser}
+                selectedUserObj={selectedUserObj}
+                selectedRoomObj={selectedRoomObj}
+                isGroupSelected={isGroupSelected}
+                messages={messages}
+                userName={userName}
+                typingUsers={typingUsers}
+                formatLastSeen={formatLastSeen}
+                renderMessageTicks={renderMessageTicks}
+                messageText={messageText}
+                handleTyping={handleTyping}
+                handleKeyPress={handleKeyPress}
+                sendMessage={sendMessage}
+              />
             ) : (
               <>
-                {/* Header with Sidebar Trigger */}
-                <header className="flex h-16 shrink-{/* 0 items-center gap-2 border-b bg-linear-to-r from-white to-sky-50 dark:from-gray-900 dark:to-sky-950 px-4">
+                <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-linear-to-r from-white to-sky-50 dark:from-gray-900 dark:to-sky-950 px-4">
                   <SidebarTrigger />
                   <h2 className="font-semibold text-lg text-muted-foreground">
                     Chat App
@@ -588,8 +391,7 @@ const App = () => {
               </>
             )}
           </SidebarInset>
-          {/* </div> */}
-          {/* Disconnect Confirmation Dialog */}
+
           <AlertDialog
             open={showDisconnectDialog}
             onOpenChange={setShowDisconnectDialog}
@@ -599,14 +401,14 @@ const App = () => {
                 <AlertDialogTitle>Disconnect from chat?</AlertDialogTitle>
                 <AlertDialogDescription>
                   You will be signed out and returned to the login screen. Your
-                  chat history might lost.
+                  chat history might be lost.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={handleDisconnect}
-                  variant="destructive"
+                  className="bg-red-600 hover:bg-red-700"
                 >
                   Disconnect
                 </AlertDialogAction>
