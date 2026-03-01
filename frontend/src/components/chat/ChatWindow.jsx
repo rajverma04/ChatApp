@@ -225,7 +225,7 @@ const ChatWindow = ({
                         })
                     )}
                     {/* Typing Indicator in Window */}
-                    {!isGroupSelected && typingUsers.has(selectedUser) && (
+                    {!isGroupSelected && typingUsers?.has?.(selectedUser) && (
                         <div className="flex items-start">
                             <div className="bg-sky-100/50 dark:bg-sky-900/30 rounded-2xl px-4 py-2 flex gap-1 items-center animate-pulse">
                                 <span className="w-1.5 h-1.5 bg-sky-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
@@ -234,7 +234,7 @@ const ChatWindow = ({
                             </div>
                         </div>
                     )}
-                    {isGroupSelected && Array.from(typingUsers).filter(u => u !== userName).length > 0 && (
+                    {isGroupSelected && typingUsers && Array.from(typingUsers).filter(u => u !== userName).length > 0 && (
                         <div className="flex items-start">
                             <div className="bg-sky-100/50 dark:bg-sky-900/30 rounded-2xl px-4 py-2 flex gap-2 items-center">
                                 <span className="text-[10px] font-medium text-sky-600">

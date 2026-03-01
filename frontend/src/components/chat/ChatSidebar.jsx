@@ -341,7 +341,7 @@ const ChatSidebar = ({
                                                     {user.name}
                                                 </span>
                                                 {user.online ? (
-                                                    typingUsers.has(user.name) ? (
+                                                    typingUsers?.has?.(user.name) ? (
                                                         <span className="text-xs text-sky-600 dark:text-sky-400 font-medium flex items-center gap-1">
                                                             typing...
                                                         </span>
