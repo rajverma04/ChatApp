@@ -4,12 +4,24 @@ import { users } from "../utils.js";
 export default (io, socket) => {
     const sendMessage = async (message) => {
         try {
+            // Guard: reject payloads over 10MB (base64 ~1.37x raw size)
+            const payloadSize = (message.mediaUrl || "").length;
+            if (payloadSize > 10 * 1024 * 1024) {
+                return socket.emit("error", { message: "File too large. Maximum size is 10MB." });
+            }
+            if (!message.data && !message.mediaUrl) {
+                return socket.emit("error", { message: "Message cannot be empty." });
+            }
+
             const newMessage = await Message.create({
                 from: message.userName,
                 to: message.to,
-                message: message.data,
+                message: message.data || "",
                 isGroup: message.isGroup || false,
                 status: "sent",
+                mediaUrl: message.mediaUrl || null,
+                mediaType: message.mediaType || null,
+                mediaName: message.mediaName || null,
             });
 
             const messageData = {
@@ -21,6 +33,9 @@ export default (io, socket) => {
                 isGroup: newMessage.isGroup,
                 status: newMessage.status,
                 reactions: [],
+                mediaUrl: newMessage.mediaUrl,
+                mediaType: newMessage.mediaType,
+                mediaName: newMessage.mediaName,
             };
 
             if (message.isGroup) {

@@ -51,6 +51,9 @@ export default (io, socket) => {
                 name: u.name,
                 online: u.online,
                 lastSeen: u.lastSeen,
+                avatar: u.avatar || null,
+                bio: u.bio || "",
+                status: u.online ? (u.status || "Online") : null,
             }));
             io.emit("users", userList);
 
@@ -119,7 +122,7 @@ export default (io, socket) => {
                 users.delete(socket.userName);
                 await User.findOneAndUpdate({ name: socket.userName }, { online: false, lastSeen: new Date(), socketId: null });
                 const allUsers = await User.find({}).lean();
-                const userList = allUsers.map((u) => ({ name: u.name, online: u.online, lastSeen: u.lastSeen }));
+                const userList = allUsers.map((u) => ({ name: u.name, online: u.online, lastSeen: u.lastSeen, avatar: u.avatar || null, bio: u.bio || "", status: u.online ? (u.status || "Online") : null }));
                 io.emit("users", userList);
                 socket.userName = null;
             } catch (error) {
@@ -134,7 +137,7 @@ export default (io, socket) => {
                 users.delete(socket.userName);
                 await User.findOneAndUpdate({ name: socket.userName }, { online: false, lastSeen: new Date(), socketId: null });
                 const allUsers = await User.find({}).lean();
-                const userList = allUsers.map((u) => ({ name: u.name, online: u.online, lastSeen: u.lastSeen }));
+                const userList = allUsers.map((u) => ({ name: u.name, online: u.online, lastSeen: u.lastSeen, avatar: u.avatar || null, bio: u.bio || "", status: u.online ? (u.status || "Online") : null }));
                 io.emit("users", userList);
             } catch (error) {
                 console.error("Error in disconnect event:", error);
@@ -142,7 +145,36 @@ export default (io, socket) => {
         }
     };
 
+    const updateProfile = async ({ avatar, bio, status }) => {
+        const name = socket.userName;
+        if (!name) return socket.emit("error", { message: "Not authenticated" });
+        try {
+            const updateData = {};
+            if (avatar !== undefined) updateData.avatar = avatar;
+            if (bio !== undefined) updateData.bio = bio;
+            if (status !== undefined) updateData.status = status;
+
+            await User.findOneAndUpdate({ name }, updateData);
+
+            const allUsers = await User.find({}).lean();
+            const userList = allUsers.map((u) => ({
+                name: u.name,
+                online: u.online,
+                lastSeen: u.lastSeen,
+                avatar: u.avatar || null,
+                bio: u.bio || "",
+                status: u.online ? (u.status || "Online") : null,
+            }));
+            io.emit("users", userList);
+            socket.emit("profile_updated");
+        } catch (error) {
+            console.error("Error in update_profile:", error);
+            socket.emit("error", { message: "Failed to update profile" });
+        }
+    };
+
     socket.on("join", join);
     socket.on("leave", leave);
     socket.on("disconnect", disconnect);
+    socket.on("update_profile", updateProfile);
 };

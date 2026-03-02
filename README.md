@@ -376,3 +376,7 @@ For issues, questions, or contributions, please open an issue in the repository.
 ---
 
 **Happy Chatting! 💬**
+
+
+media sharing:  Allow users to upload profile pictures, set a bio, and update their "status" (e.g., Busy, Working).
+emoji reactions: Allow users to react to messages with emojis (e.g., like, love, haha, wow, sad, angry).
