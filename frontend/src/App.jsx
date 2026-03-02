@@ -33,6 +33,7 @@ const App = () => {
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
+  const [attachment, setAttachment] = useState(null); // { dataUrl, type, name }
 
   const messagesEndRef = useRef(null);
 
@@ -55,7 +56,8 @@ const App = () => {
   }, [messages]);
 
   const sendMessage = () => {
-    if (!messageText.trim() || !selectedUser) return;
+    if (!messageText.trim() && !attachment) return;
+    if (!selectedUser) return;
 
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
@@ -68,8 +70,12 @@ const App = () => {
       to: selectedUser,
       data: messageText,
       isGroup: isGroupSelected,
+      mediaUrl: attachment?.dataUrl || null,
+      mediaType: attachment?.type || null,
+      mediaName: attachment?.name || null,
     });
     setMessageText("");
+    setAttachment(null);
   };
 
   const handleTyping = (value) => {
@@ -138,7 +144,7 @@ const App = () => {
                       <MessageCircle className="h-5 w-5 text-sky-600 dark:text-sky-400" />
                     </div>
                     <h1 className="text-lg font-bold tracking-tight bg-linear-to-r from-sky-600 to-cyan-600 dark:from-sky-400 dark:to-cyan-400 bg-clip-text text-transparent">
-                      Antigravity Chat
+                      Chat App
                     </h1>
                   </div>
                 </div>
@@ -159,6 +165,8 @@ const App = () => {
                   typingUsers={typingUsers}
                   renderMessageTicks={renderMessageTicks}
                   formatLastSeen={formatLastSeen}
+                  attachment={attachment}
+                  setAttachment={setAttachment}
                 />
               </main>
             </SidebarInset>

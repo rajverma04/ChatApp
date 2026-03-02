@@ -1,10 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import socket from "../../utils/socket";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Hash, Users, Info, Lock, Smile } from "lucide-react";
+import { Send, Hash, Users, Info, Lock, Smile, Paperclip, X, FileIcon, Download } from "lucide-react";
 import {
     Popover,
     PopoverContent,
@@ -27,13 +27,69 @@ const ChatWindow = ({
     handleTyping,
     handleKeyPress,
     sendMessage,
+    attachment,
+    setAttachment,
 }) => {
     const messagesEndRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const [lightboxSrc, setLightboxSrc] = useState(null);
 
     // Auto-scroll to bottom
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, selectedUser]);
+
+    const handleFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) {
+            alert("File too large. Maximum size is 10MB.");
+            return;
+        }
+        const mediaType = file.type.startsWith("image/") ? "image"
+            : file.type.startsWith("video/") ? "video"
+                : "file";
+        const reader = new FileReader();
+        reader.onloadend = () => setAttachment({ dataUrl: reader.result, type: mediaType, name: file.name });
+        reader.readAsDataURL(file);
+        // Reset input so the same file can be re-selected
+        e.target.value = "";
+    };
+
+    const renderMediaBubble = (msg) => {
+        if (!msg.mediaUrl) return null;
+        if (msg.mediaType === "image") {
+            return (
+                <img
+                    src={msg.mediaUrl}
+                    alt={msg.mediaName || "image"}
+                    className="max-w-[260px] rounded-xl cursor-pointer hover:opacity-90 transition-opacity mt-1 border border-white/20"
+                    onClick={() => setLightboxSrc(msg.mediaUrl)}
+                />
+            );
+        }
+        if (msg.mediaType === "video") {
+            return (
+                <video
+                    src={msg.mediaUrl}
+                    controls
+                    className="max-w-[280px] rounded-xl mt-1 border border-white/20"
+                />
+            );
+        }
+        // Generic file download chip
+        return (
+            <a
+                href={msg.mediaUrl}
+                download={msg.mediaName || "file"}
+                className="flex items-center gap-2 mt-1 px-3 py-2 rounded-xl bg-white/20 hover:bg-white/30 transition-colors border border-white/20 max-w-[240px]"
+            >
+                <FileIcon className="h-4 w-4 shrink-0" />
+                <span className="text-xs truncate">{msg.mediaName || "Download file"}</span>
+                <Download className="h-3.5 w-3.5 shrink-0 ml-auto" />
+            </a>
+        );
+    };
 
     const currentMessages = messages.filter((msg) => {
         if (isGroupSelected) {
@@ -95,10 +151,21 @@ const ChatWindow = ({
                 </div>
             );
         } else if (selectedUserObj) {
+            const statusColor =
+                selectedUserObj.status === "Busy" ? "bg-red-500" :
+                    selectedUserObj.status === "Working" ? "bg-yellow-400" :
+                        selectedUserObj.status === "Away" ? "bg-gray-400" :
+                            "bg-emerald-500";
+            const statusLabel =
+                selectedUserObj.status === "Busy" ? "🔴 Busy" :
+                    selectedUserObj.status === "Working" ? "🟡 Working" :
+                        selectedUserObj.status === "Away" ? "⚫ Away" :
+                            "🟢 Online";
             return (
                 <div className="flex items-center gap-3">
                     <div className="relative">
                         <Avatar className="h-10 w-10 border-2 border-white dark:border-gray-800 shadow-sm">
+                            <AvatarImage src={selectedUserObj.avatar} alt={selectedUser} className="object-cover" />
                             <AvatarFallback className={`${selectedUserObj.online
                                 ? "bg-linear-to-br from-sky-500 to-cyan-500"
                                 : "bg-linear-to-br from-gray-400 to-gray-500"
@@ -107,19 +174,22 @@ const ChatWindow = ({
                             </AvatarFallback>
                         </Avatar>
                         {selectedUserObj.online && (
-                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-gray-900 rounded-full animate-pulse"></span>
+                            <span className={`absolute bottom-0 right-0 w-3 h-3 ${statusColor} border-2 border-white dark:border-gray-900 rounded-full`} />
                         )}
                     </div>
                     <div className="flex flex-col">
                         <h2 className="font-bold text-lg leading-none">{selectedUser}</h2>
                         {selectedUserObj.online ? (
-                            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">
-                                ● Online
+                            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-0.5">
+                                {statusLabel}
                             </span>
                         ) : (
-                            <span className="text-xs text-muted-foreground mt-1">
+                            <span className="text-xs text-muted-foreground mt-0.5">
                                 {formatLastSeen(selectedUserObj.lastSeen) ? `Last seen ${formatLastSeen(selectedUserObj.lastSeen)}` : "Offline"}
                             </span>
+                        )}
+                        {selectedUserObj.bio && (
+                            <span className="text-xs text-muted-foreground/80 italic mt-0.5 max-w-[220px] truncate">{selectedUserObj.bio}</span>
                         )}
                     </div>
                 </div>
@@ -163,9 +233,14 @@ const ChatWindow = ({
                                                 : "bg-white dark:bg-gray-800 text-foreground border border-sky-100/50 dark:border-sky-900/50 rounded-tl-none"
                                                 }`}
                                         >
-                                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                                {msg.message}
-                                            </p>
+                                            {/* Media attachment */}
+                                            {renderMediaBubble(msg)}
+                                            {/* Text content — hidden if empty */}
+                                            {msg.message && (
+                                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words mt-1">
+                                                    {msg.message}
+                                                </p>
+                                            )}
                                             <div
                                                 className={`flex items-center gap-1 mt-1 text-[10px] ${msg.from === userName ? "text-sky-100 justify-end" : "text-muted-foreground"}`}
                                             >
@@ -247,20 +322,59 @@ const ChatWindow = ({
                 </div>
             </ScrollArea>
 
-            <div className="p-6 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-t">
+            <div className="px-6 pb-6 pt-3 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-t">
+                {/* Attachment Preview Strip */}
+                {attachment && (
+                    <div className="flex items-center gap-2 mb-3 p-2 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-100 dark:border-sky-900">
+                        {attachment.type === "image" && (
+                            <img src={attachment.dataUrl} alt="preview" className="h-10 w-10 rounded-lg object-cover border" />
+                        )}
+                        {attachment.type === "video" && (
+                            <div className="h-10 w-10 rounded-lg bg-sky-200 dark:bg-sky-800 flex items-center justify-center">
+                                <FileIcon className="h-5 w-5 text-sky-600" />
+                            </div>
+                        )}
+                        {attachment.type === "file" && (
+                            <div className="h-10 w-10 rounded-lg bg-sky-200 dark:bg-sky-800 flex items-center justify-center">
+                                <FileIcon className="h-5 w-5 text-sky-600" />
+                            </div>
+                        )}
+                        <span className="text-xs text-sky-700 dark:text-sky-300 font-medium truncate flex-1">{attachment.name}</span>
+                        <button
+                            onClick={() => setAttachment(null)}
+                            className="p-1 rounded-full hover:bg-sky-200 dark:hover:bg-sky-800 transition-colors"
+                        >
+                            <X className="h-3.5 w-3.5 text-sky-600" />
+                        </button>
+                    </div>
+                )}
                 <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        sendMessage();
-                    }}
+                    onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
                     className="flex items-center gap-3 max-w-4xl mx-auto"
                 >
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
+                        className="hidden"
+                        onChange={handleFileChange}
+                    />
+                    {/* Attachment button */}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-[52px] w-[52px] rounded-2xl border border-sky-100 dark:border-sky-900 hover:bg-sky-50 dark:hover:bg-sky-950/30 text-sky-500 hover:text-sky-600 transition-all shrink-0"
+                        title="Attach file"
+                    >
+                        <Paperclip className="h-5 w-5" />
+                    </Button>
                     <div className="flex-1 relative group">
                         <Input
                             value={messageText}
-                            onChange={(e) => {
-                                handleTyping(e.target.value);
-                            }}
+                            onChange={(e) => handleTyping(e.target.value)}
                             onKeyDown={handleKeyPress}
                             placeholder={isGroupSelected ? `Message in ${selectedUser}...` : `Message @${selectedUser}...`}
                             className="pr-12 py-6 rounded-2xl border-sky-100 dark:border-sky-900 bg-linear-to-b from-sky-50/50 to-white dark:from-sky-950/20 dark:to-gray-950 focus-visible:ring-sky-500 ring-offset-sky-100 shadow-sm transition-all group-hover:shadow-md"
@@ -268,13 +382,34 @@ const ChatWindow = ({
                     </div>
                     <Button
                         type="submit"
-                        disabled={!messageText?.trim()}
+                        disabled={!messageText?.trim() && !attachment}
                         className="rounded-2xl h-[52px] w-[52px] bg-linear-to-br from-sky-600 to-cyan-600 hover:from-sky-700 hover:to-cyan-700 shadow-lg shadow-sky-600/20 transition-all hover:scale-105 active:scale-95 disabled:grayscale disabled:opacity-50"
                     >
                         <Send className="h-5 w-5" />
                     </Button>
                 </form>
             </div>
+
+            {/* Lightbox */}
+            {lightboxSrc && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
+                    onClick={() => setLightboxSrc(null)}
+                >
+                    <img
+                        src={lightboxSrc}
+                        alt="Full size"
+                        className="max-w-full max-h-full rounded-2xl shadow-2xl object-contain"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                        onClick={() => setLightboxSrc(null)}
+                        className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                    >
+                        <X className="h-6 w-6" />
+                    </button>
+                </div>
+            )}
         </div>
     );
 };

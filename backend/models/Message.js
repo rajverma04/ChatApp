@@ -16,7 +16,20 @@ const messageSchema = new mongoose.Schema({
   },
   message: {
     type: String,
-    required: true
+    default: ""
+  },
+  mediaUrl: {
+    type: String,
+    default: null  // base64 encoded media
+  },
+  mediaType: {
+    type: String,
+    enum: ["image", "video", "file", null],
+    default: null
+  },
+  mediaName: {
+    type: String,
+    default: null  // original filename
   },
   status: {
     type: String,
