@@ -36,6 +36,11 @@ const messageSchema = new mongoose.Schema({
     enum: ['sent', 'delivered', 'read'],
     default: 'sent'
   },
+  // true for E2E-encrypted DMs (client-encrypted) and server-encrypted group messages
+  isEncrypted: {
+    type: Boolean,
+    default: false
+  },
   reactions: [
     {
       emoji: String,

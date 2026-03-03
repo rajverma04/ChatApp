@@ -43,7 +43,11 @@ const ChatSidebar = ({
     setShowDisconnectDialog,
     searchQuery,
     setSearchQuery,
-    unreadCounts
+    unreadCounts,
+    searchResults = [],
+    searchUsers,
+    notifications = [],
+    clearNotification,
 }) => {
     const [newRoomName, setNewRoomName] = useState("");
     const [newRoomDescription, setNewRoomDescription] = useState("");
@@ -51,6 +55,8 @@ const ChatSidebar = ({
     const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
     const [isDiscoverOpen, setIsDiscoverOpen] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
+    const [dmSearch, setDmSearch] = useState("");
+    const [showDmSearch, setShowDmSearch] = useState(false);
 
     // Filter rooms into joined and discoverable
     const joinedRooms = (rooms || []).filter((r) => (r.members || []).includes(userName));
@@ -127,6 +133,21 @@ const ChatSidebar = ({
                     </div>
                 </SidebarHeader>
                 <SidebarContent>
+                    {/* Notification banners */}
+                    {notifications.length > 0 && (
+                        <div className="px-3 pt-2 space-y-1.5 group-data-[collapsible=icon]:hidden">
+                            {notifications.map(n => (
+                                <div key={n.id} className={`flex items-start gap-2 px-3 py-2 rounded-xl text-xs border shadow-sm ${n.type === 'join_request' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                                        : n.type === 'join_approved' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                                            : 'bg-sky-50 dark:bg-sky-900/20 border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200'
+                                    }`}>
+                                    <Bell className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                                    <span className="flex-1 leading-tight">{n.message}</span>
+                                    <button onClick={() => clearNotification?.(n.id)} className="ml-1 shrink-0 opacity-60 hover:opacity-100"><X className="h-3 w-3" /></button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div className="px-4 py-3 group-data-[collapsible=icon]:hidden">
                         <div className="relative">
                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -303,14 +324,60 @@ const ChatSidebar = ({
                     )}
 
                     <SidebarGroup>
-                        <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
-                            Direct Messages
+                        <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden flex items-center justify-between pr-2">
+                            <span>Direct Messages</span>
+                            <button
+                                onClick={() => setShowDmSearch(v => !v)}
+                                className="text-muted-foreground hover:text-sky-600 transition-colors"
+                                title="Find user"
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                            </button>
                         </SidebarGroupLabel>
+                        {showDmSearch && (
+                            <div className="px-2 pb-2 group-data-[collapsible=icon]:hidden">
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                                    <Input
+                                        value={dmSearch}
+                                        onChange={(e) => { setDmSearch(e.target.value); searchUsers?.(e.target.value); }}
+                                        placeholder="Search by username…"
+                                        className="pl-8 h-8 text-xs rounded-xl border-sky-100 dark:border-sky-900"
+                                    />
+                                </div>
+                                {dmSearch && searchResults.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                        {searchResults.map(r => (
+                                            <button
+                                                key={r.name}
+                                                onClick={() => { handleSelectUser(r.name); setShowDmSearch(false); setDmSearch(""); }}
+                                                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors text-left"
+                                            >
+                                                <div className="relative shrink-0">
+                                                    <Avatar className="h-7 w-7">
+                                                        <AvatarImage src={r.avatar} alt={r.name} className="object-cover" />
+                                                        <AvatarFallback className="text-xs bg-sky-100 text-sky-700">{r.name.charAt(0).toUpperCase()}</AvatarFallback>
+                                                    </Avatar>
+                                                    {r.online && <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-500 border border-white rounded-full" />}
+                                                </div>
+                                                <div className="flex flex-col">
+                                                    <span className="text-xs font-medium">{r.name}</span>
+                                                    {r.bio && <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">{r.bio}</span>}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {dmSearch && searchResults.length === 0 && (
+                                    <p className="text-xs text-muted-foreground text-center py-2">No users found</p>
+                                )}
+                            </div>
+                        )}
                         <SidebarGroupContent>
                             <SidebarMenu>
                                 {filteredUsers.length === 0 ? (
                                     <div className="p-4 text-center text-muted-foreground text-xs group-data-[collapsible=icon]:hidden italic">
-                                        {searchQuery ? "No users found" : "No other users"}
+                                        {searchQuery ? "No contacts found" : "No contacts yet — search above to start a DM"}
                                     </div>
                                 ) : (
                                     filteredUsers.map((user) => (
