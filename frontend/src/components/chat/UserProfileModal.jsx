@@ -20,7 +20,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Camera, Loader2, CheckCircle2 } from "lucide-react";
+import { Camera, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
 const STATUS_OPTIONS = [
     { value: "Online", label: "🟢 Online", color: "text-emerald-500" },
@@ -33,9 +33,13 @@ const UserProfileModal = ({ open, onClose, currentUser }) => {
     const [avatar, setAvatar] = useState(currentUser?.avatar || null);
     const [bio, setBio] = useState(currentUser?.bio || "");
     const [status, setStatus] = useState(currentUser?.status || "Online");
+    const [newUsername, setNewUsername] = useState("");
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
     const fileInputRef = useRef(null);
+
+    const name = currentUser?.name || "";
 
     const handleImageChange = (e) => {
         const file = e.target.files?.[0];
@@ -50,19 +54,37 @@ const UserProfileModal = ({ open, onClose, currentUser }) => {
     };
 
     const handleSave = () => {
+        setErrorMsg("");
         setSaving(true);
-        socket.emit("update_profile", { avatar, bio, status });
-        socket.once("profile_updated", () => {
-            setSaving(false);
-            setSaved(true);
-            setTimeout(() => {
-                setSaved(false);
-                onClose();
-            }, 1200);
-        });
-    };
 
-    const name = currentUser?.name || "";
+        const doProfileSave = () => {
+            socket.emit("update_profile", { avatar, bio, status });
+            socket.once("profile_updated", () => {
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => { setSaved(false); onClose(); }, 1200);
+            });
+        };
+
+        // If username is being changed, do that first
+        if (newUsername.trim() && newUsername.trim() !== name) {
+            if (newUsername.trim().length < 3) {
+                setSaving(false);
+                return setErrorMsg("Username must be at least 3 characters");
+            }
+            socket.emit("change_username", { newName: newUsername.trim() });
+            // Listen for success or error — page reloads on success (handled in useChatSession)
+            socket.once("error", ({ message }) => {
+                setSaving(false);
+                setErrorMsg(message);
+            });
+            // Profile will be saved after reload via useChatSession auto-rejoin
+            // Still save profile data now so it's not lost
+            doProfileSave();
+        } else {
+            doProfileSave();
+        }
+    };
 
     return (
         <Dialog open={open} onOpenChange={onClose}>
@@ -102,6 +124,29 @@ const UserProfileModal = ({ open, onClose, currentUser }) => {
                     </DialogHeader>
 
                     <div className="space-y-4">
+                        {/* Username change */}
+                        <div className="space-y-1.5">
+                            <Label htmlFor="username" className="text-sm font-medium">Change Username</Label>
+                            <Input
+                                id="username"
+                                value={newUsername}
+                                onChange={(e) => { setNewUsername(e.target.value); setErrorMsg(""); }}
+                                placeholder={`Current: ${name}`}
+                                minLength={3}
+                                maxLength={30}
+                                className="rounded-xl border-slate-200 dark:border-slate-700 focus-visible:ring-sky-500 text-sm"
+                            />
+                            <p className="text-xs text-muted-foreground">Must be unique · min 3 characters · leave blank to keep current</p>
+                        </div>
+
+                        {/* Error message */}
+                        {errorMsg && (
+                            <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
+                                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                                {errorMsg}
+                            </div>
+                        )}
+
                         {/* Bio */}
                         <div className="space-y-1.5">
                             <Label htmlFor="bio" className="text-sm font-medium">Bio</Label>

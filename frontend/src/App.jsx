@@ -24,6 +24,7 @@ import ChatWindow from "./components/chat/ChatWindow";
 // Hooks and Utils
 import { useChatSession } from "./hooks/useChatSession";
 import { formatLastSeen, renderMessageTicks } from "./utils/chatUtils.jsx";
+import { encryptMessage } from "./utils/crypto";
 
 const App = () => {
   const [userName, setUserName] = useState(localStorage.getItem("chat_user") || "");
@@ -46,16 +47,26 @@ const App = () => {
     typingUsers = new Set(),
     unreadCounts,
     typingTimeoutRef,
+    searchResults,
+    searchUsers,
+    notifications,
+    clearNotification,
+    loadMoreMessages,
+    hasMoreMap,
+    loadingMore,
+    usersRef,
   } = useChatSession(userName, password, selectedUser, isGroupSelected);
 
-  const selectedUserObj = !isGroupSelected ? users.find((u) => u.name === selectedUser) : null;
+  const selectedUserObj = !isGroupSelected
+    ? (users.find((u) => u.name === selectedUser) ?? searchResults.find((u) => u.name === selectedUser) ?? null)
+    : null;
   const selectedRoomObj = isGroupSelected ? rooms.find((r) => r.name === selectedUser) : null;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!messageText.trim() && !attachment) return;
     if (!selectedUser) return;
 
@@ -65,11 +76,24 @@ const App = () => {
     }
     socket.emit("stop_typing", { from: userName, to: selectedUser, isGroup: isGroupSelected });
 
+    let data = messageText;
+    let isEncrypted = false;
+
+    if (!isGroupSelected && messageText.trim()) {
+      // Encrypt DM text with recipient's ECDH public key
+      const recipientObj = usersRef.current.find(u => u.name === selectedUser);
+      if (recipientObj?.publicKey) {
+        data = await encryptMessage(messageText, selectedUser, recipientObj.publicKey);
+        isEncrypted = true;
+      }
+    }
+
     socket.emit("send_message", {
       userName,
       to: selectedUser,
-      data: messageText,
+      data,
       isGroup: isGroupSelected,
+      isEncrypted,
       mediaUrl: attachment?.dataUrl || null,
       mediaType: attachment?.type || null,
       mediaName: attachment?.name || null,
@@ -132,6 +156,10 @@ const App = () => {
               formatLastSeen={formatLastSeen}
               unreadCounts={unreadCounts}
               setShowDisconnectDialog={setShowDisconnectDialog}
+              searchResults={searchResults}
+              searchUsers={searchUsers}
+              notifications={notifications}
+              clearNotification={clearNotification}
             />
 
             <SidebarInset className="flex flex-col flex-1 overflow-hidden">
@@ -167,6 +195,10 @@ const App = () => {
                   formatLastSeen={formatLastSeen}
                   attachment={attachment}
                   setAttachment={setAttachment}
+                  users={users}
+                  loadMoreMessages={loadMoreMessages}
+                  hasMoreMap={hasMoreMap}
+                  loadingMore={loadingMore}
                 />
               </main>
             </SidebarInset>

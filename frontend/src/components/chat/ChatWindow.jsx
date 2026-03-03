@@ -1,15 +1,15 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import socket from "../../utils/socket";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Hash, Users, Info, Lock, Smile, Paperclip, X, FileIcon, Download } from "lucide-react";
+import { Send, Hash, Users, Info, Lock, Smile, Paperclip, X, FileIcon, Download, UserCog, Loader2 } from "lucide-react";
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
+import RoomMembersModal from "./RoomMembersModal";
 
 const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "😡"];
 
@@ -29,15 +29,105 @@ const ChatWindow = ({
     sendMessage,
     attachment,
     setAttachment,
+    users = [],
+    loadMoreMessages,
+    hasMoreMap = {},
+    loadingMore = false,
 }) => {
     const messagesEndRef = useRef(null);
+    const scrollContainerRef = useRef(null);
     const fileInputRef = useRef(null);
     const [lightboxSrc, setLightboxSrc] = useState(null);
+    const [showMembersModal, setShowMembersModal] = useState(false);
 
-    // Auto-scroll to bottom
+    // Track whether this is the initial load for this chat (so we auto-scroll to bottom)
+    const prevSelectedUserRef = useRef(null);
+    const isInitialLoadRef = useRef(true);
+
+    // When the selected chat changes, reset state and scroll to bottom
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, selectedUser]);
+        if (selectedUser !== prevSelectedUserRef.current) {
+            prevSelectedUserRef.current = selectedUser;
+            isInitialLoadRef.current = true;
+        }
+    }, [selectedUser]);
+
+    // Auto-scroll to bottom on initial load or when a new message arrives at the bottom
+    useEffect(() => {
+        if (!scrollContainerRef.current) return;
+        const container = scrollContainerRef.current;
+
+        if (isInitialLoadRef.current) {
+            // On initial load, jump straight to the bottom
+            container.scrollTop = container.scrollHeight;
+            isInitialLoadRef.current = false;
+            return;
+        }
+
+        // If already near the bottom (within 200px), keep scrolling down on new messages
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distanceFromBottom < 200) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [messages]);
+
+    // Handle scroll: trigger load-more when near the top
+    const handleScroll = useCallback(() => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+        if (!selectedUser) return;
+
+        // Only fire when backend explicitly told us there are older messages
+        if (hasMoreMap[selectedUser] !== true) return;
+        if (loadingMore) return;
+
+        // Trigger when within 120px of the top
+        if (container.scrollTop <= 120) {
+            const currentMessages = messages.filter((msg) => {
+                if (isGroupSelected) return msg.to === selectedUser && msg.isGroup === true;
+                return (
+                    (msg.from === userName && msg.to === selectedUser && !msg.isGroup) ||
+                    (msg.from === selectedUser && msg.to === userName && !msg.isGroup)
+                );
+            });
+
+            if (currentMessages.length === 0) return;
+
+            // The oldest message in this chat's current view is the cursor
+            const oldestMsg = currentMessages[0];
+            // Use the stored ISO timestamp or fall back to parsing the display time
+            const beforeTs = oldestMsg.createdAt || new Date(oldestMsg.time).toISOString();
+            loadMoreMessages(selectedUser, isGroupSelected, beforeTs);
+        }
+    }, [selectedUser, isGroupSelected, hasMoreMap, loadingMore, messages, loadMoreMessages, userName]);
+
+    // Preserve scroll position when older messages are prepended
+    const prevScrollHeight = useRef(0);
+    const prevFirstMsgId = useRef(null);
+
+    useEffect(() => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+
+        const currentMessages = messages.filter((msg) => {
+            if (isGroupSelected) return msg.to === selectedUser && msg.isGroup === true;
+            return (
+                (msg.from === userName && msg.to === selectedUser && !msg.isGroup) ||
+                (msg.from === selectedUser && msg.to === userName && !msg.isGroup)
+            );
+        });
+
+        const firstMsgId = currentMessages[0]?.id;
+
+        // If the first message changed (prepend happened), restore scroll offset
+        if (firstMsgId && firstMsgId !== prevFirstMsgId.current && prevScrollHeight.current > 0) {
+            const addedHeight = container.scrollHeight - prevScrollHeight.current;
+            container.scrollTop = container.scrollTop + addedHeight;
+        }
+
+        prevFirstMsgId.current = firstMsgId;
+        prevScrollHeight.current = container.scrollHeight;
+    }, [messages, selectedUser, isGroupSelected, userName]);
 
     const handleFileChange = (e) => {
         const file = e.target.files?.[0];
@@ -52,7 +142,6 @@ const ChatWindow = ({
         const reader = new FileReader();
         reader.onloadend = () => setAttachment({ dataUrl: reader.result, type: mediaType, name: file.name });
         reader.readAsDataURL(file);
-        // Reset input so the same file can be re-selected
         e.target.value = "";
     };
 
@@ -77,7 +166,6 @@ const ChatWindow = ({
                 />
             );
         }
-        // Generic file download chip
         return (
             <a
                 href={msg.mediaUrl}
@@ -102,6 +190,8 @@ const ChatWindow = ({
         }
     });
 
+    const hasMore = hasMoreMap[selectedUser];
+
     const getChatHeader = () => {
         if (isGroupSelected && selectedRoomObj) {
             return (
@@ -121,6 +211,7 @@ const ChatWindow = ({
                                 <Users className="h-3 w-3" />
                                 {selectedRoomObj.members?.length || 0} members
                             </span>
+                            {/* Info popover */}
                             <Popover>
                                 <PopoverTrigger asChild>
                                     <Button variant="ghost" size="icon" className="h-4 w-4 p-0 hover:bg-transparent">
@@ -146,6 +237,17 @@ const ChatWindow = ({
                                     </div>
                                 </PopoverContent>
                             </Popover>
+                            {/* Manage Members (creator only) */}
+                            {selectedRoomObj.createdBy === userName && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-900/20 gap-0.5 rounded-md"
+                                    onClick={() => setShowMembersModal(true)}
+                                >
+                                    <UserCog className="h-3 w-3" /> Manage
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -204,8 +306,33 @@ const ChatWindow = ({
                 {getChatHeader()}
             </header>
 
-            <ScrollArea className="flex-1 p-6">
+            {/* Scrollable message area — plain div so we control scroll events */}
+            <div
+                ref={scrollContainerRef}
+                className="flex-1 overflow-y-auto p-6"
+                onScroll={handleScroll}
+                style={{ overscrollBehavior: "contain" }}
+            >
                 <div className="space-y-6 max-w-4xl mx-auto">
+
+                    {/* Load-more indicator at the top */}
+                    {loadingMore && (
+                        <div className="flex justify-center py-2">
+                            <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
+                        </div>
+                    )}
+
+                    {/* "Beginning of conversation" marker */}
+                    {!loadingMore && hasMore === false && currentMessages.length > 0 && (
+                        <div className="flex items-center gap-3 py-2">
+                            <div className="flex-1 h-px bg-sky-100 dark:bg-sky-900/40" />
+                            <span className="text-[11px] text-muted-foreground whitespace-nowrap px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-900">
+                                Beginning of conversation
+                            </span>
+                            <div className="flex-1 h-px bg-sky-100 dark:bg-sky-900/40" />
+                        </div>
+                    )}
+
                     {currentMessages.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-[40vh] text-muted-foreground space-y-4">
                             <div className="w-16 h-16 rounded-full bg-sky-50 dark:bg-sky-900/20 flex items-center justify-center">
@@ -235,7 +362,7 @@ const ChatWindow = ({
                                         >
                                             {/* Media attachment */}
                                             {renderMediaBubble(msg)}
-                                            {/* Text content — hidden if empty */}
+                                            {/* Text content */}
                                             {msg.message && (
                                                 <p className="text-sm leading-relaxed whitespace-pre-wrap break-words mt-1">
                                                     {msg.message}
@@ -299,7 +426,7 @@ const ChatWindow = ({
                             );
                         })
                     )}
-                    {/* Typing Indicator in Window */}
+                    {/* Typing Indicator */}
                     {!isGroupSelected && typingUsers?.has?.(selectedUser) && (
                         <div className="flex items-start">
                             <div className="bg-sky-100/50 dark:bg-sky-900/30 rounded-2xl px-4 py-2 flex gap-1 items-center animate-pulse">
@@ -320,7 +447,7 @@ const ChatWindow = ({
                     )}
                     <div ref={messagesEndRef} />
                 </div>
-            </ScrollArea>
+            </div>
 
             <div className="px-6 pb-6 pt-3 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-t">
                 {/* Attachment Preview Strip */}
@@ -410,6 +537,14 @@ const ChatWindow = ({
                     </button>
                 </div>
             )}
+
+            {/* Room Members Modal */}
+            <RoomMembersModal
+                open={showMembersModal}
+                onClose={() => setShowMembersModal(false)}
+                roomObj={selectedRoomObj}
+                userName={userName}
+            />
         </div>
     );
 };

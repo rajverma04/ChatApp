@@ -1,5 +1,7 @@
 import Message from "../../models/Message.js";
-import { users } from "../utils.js";
+import User from "../../models/User.js";
+import { users, broadcastContactsToUser } from "../utils.js";
+import { encryptText, decryptText } from "../../utils/encryption.js";
 
 export default (io, socket) => {
     const sendMessage = async (message) => {
@@ -13,24 +15,60 @@ export default (io, socket) => {
                 return socket.emit("error", { message: "Message cannot be empty." });
             }
 
+            // ── Encryption ────────────────────────────────────────────────────
+            // DM messages: the client already encrypts the `data` field (E2E).
+            //              We store the ciphertext as-is and mark isEncrypted=true.
+            // Group messages: server encrypts with AES-256-GCM (encrypted at rest).
+            let storedMessage = message.data || "";
+            let isEncrypted = false;
+
+            if (message.isGroup) {
+                // Server-side encryption for group messages
+                if (storedMessage) {
+                    storedMessage = encryptText(storedMessage);
+                    isEncrypted = true;
+                }
+            } else {
+                // DM: client sends { data: '{iv,ct}', isEncrypted: true } for encrypted messages
+                isEncrypted = !!message.isEncrypted;
+            }
+
             const newMessage = await Message.create({
                 from: message.userName,
                 to: message.to,
-                message: message.data || "",
+                message: storedMessage,
                 isGroup: message.isGroup || false,
+                isEncrypted,
                 status: "sent",
                 mediaUrl: message.mediaUrl || null,
                 mediaType: message.mediaType || null,
                 mediaName: message.mediaName || null,
             });
 
+            // ── Build outgoing payload ────────────────────────────────────────
+            // Group: decrypt before sending so clients see plaintext on the wire
+            // (only the DB copy is encrypted)
+            const outMessage = message.isGroup && isEncrypted
+                ? decryptText(newMessage.message)
+                : newMessage.message;
+
+            // For DMs: include the sender's public key in the payload so the receiver
+            // can decrypt immediately without waiting for a contacts-list refresh.
+            let senderPublicKey = null;
+            if (!message.isGroup && isEncrypted) {
+                const senderUser = await User.findOne({ name: message.userName }).select("publicKey").lean();
+                senderPublicKey = senderUser?.publicKey || null;
+            }
+
             const messageData = {
                 id: newMessage._id.toString(),
                 from: newMessage.from,
                 to: newMessage.to,
                 time: new Date(newMessage.createdAt).toLocaleString(),
-                message: newMessage.message,
+                message: outMessage,
                 isGroup: newMessage.isGroup,
+                isEncrypted: newMessage.isGroup ? false : isEncrypted,
+                senderPublicKey,  // null for group msgs; public key for encrypted DMs
                 status: newMessage.status,
                 reactions: [],
                 mediaUrl: newMessage.mediaUrl,
@@ -50,6 +88,19 @@ export default (io, socket) => {
                     socket.emit("message_delivered", { messageId: messageData.id });
                 }
                 socket.emit("receive_message", messageData);
+
+                // On first ever DM between these two, refresh both contacts lists
+                const dmCount = await Message.countDocuments({
+                    isGroup: false,
+                    $or: [
+                        { from: message.userName, to: message.to },
+                        { from: message.to, to: message.userName },
+                    ],
+                });
+                if (dmCount === 1) {
+                    await broadcastContactsToUser(io, message.userName);
+                    await broadcastContactsToUser(io, message.to);
+                }
             }
         } catch (error) {
             console.error("Error saving message:", error);
@@ -125,7 +176,7 @@ export default (io, socket) => {
                 message.reactions.push({ emoji, users: [socket.userName] });
             }
 
-            message.markModified('reactions');
+            message.markModified("reactions");
             await message.save();
 
             const updateData = {

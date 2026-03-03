@@ -43,6 +43,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ["Online", "Busy", "Working", "Away"],
     default: "Online"
+  },
+  // ECDH P-256 public key (base64 SPKI) for E2E DM encryption
+  publicKey: {
+    type: String,
+    default: null
   }
 });
 
